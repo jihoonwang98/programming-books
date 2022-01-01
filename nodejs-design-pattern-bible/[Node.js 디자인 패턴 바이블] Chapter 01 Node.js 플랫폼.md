@@ -146,7 +146,7 @@
 
   **[그림 1.1 다중 커넥션을 처리하기 위한 다중 스레드]**
 
-  ![image-20220101161915017](/Users/mojo/Library/Application Support/typora-user-images/image-20220101161915017.png)
+  ![image-20220101161915017](./img/image-20220101161915017.png)
 
 - 그림 1.1은 관련 연결로부터 새로운 데이터를 받기 위해 유휴상태(idle time)에 있는 각 스레드의 처리 시간을 회색으로 칠해놨습니다.
   - 예를 들어, DB나 파일시스템과 상호작용할 때와 같이 모든 유형의 I/O가 요청의 처리를 차단할 수 있다는 것을 생각해보면 I/O 작업의 결과를 위해서 스레드가 꽤 많이 블로킹된다는 것을 알 수 있습니다.
@@ -274,7 +274,7 @@
 
 **[그림 1.3 Reactor 패턴]**
 
-![image-20220101165351536](/Users/mojo/Library/Application Support/typora-user-images/image-20220101165351536.png)
+![image-20220101165351536](./img/image-20220101165351536.png)
 
 위 그림은 리액터 패턴을 사용하는 애플리케이션에서 어떤 일이 발생하는지를 보여줍니다.
 
@@ -334,7 +334,7 @@
 
 **[그림 1.4 Node.js 내부 구성요소]**
 
-![image-20220101172648611](/Users/mojo/Library/Application Support/typora-user-images/image-20220101172648611.png)
+![image-20220101172648611](./img/image-20220101172648611.png)
 
 
 
