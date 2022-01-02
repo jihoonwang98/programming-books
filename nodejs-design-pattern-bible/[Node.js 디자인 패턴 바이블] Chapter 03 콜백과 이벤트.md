@@ -567,11 +567,457 @@ SyntaxError: Unexpected token h in JSON at position 1
 
 
 
+- 이것은 `readJSONThrows()`를 `try ... catch` 블럭으로 둘러싸서 호출한다고 하더라도 블럭이 동작하는 스택과 콜백이 호출된 스택이 다르기 때문에 동작하지 않는다는 것을 의미합니다.
+- 다음 코드는 방금 설명된 것에 대한 안티 패턴을 보여줍니다.
+
+```js
+try {
+	readJSONThrows('invalid_json.json', (err) => console.log(err))
+} catch (err) {
+  console.log('This will NOT catch the JSON parsing exception')
+}
+```
+
+- 위의 `catch` 구문은 JSON 파싱 에러를 절대로 받을 수 없게 됩니다.
+  - 에러는 비동기식 실행을 발생시키는 함수 안에서가 아니고 이벤트 루프에 예외가 발생한 별도의 콜 스택을 타고 올라갑니다.
+- 앞서 언급한 것처럼, 예외가 이벤트 루프에 도달하는 순간 애플리케이션은 중단됩니다.
+- 그러나 우리는 애플리케이션이 중단되기 이전에 자원을 정리하거나 로그를 남길 수 있습니다.
+- 실제로 이러한 경우에, Node.js는 프로세스를 종료하기 직전에 `uncaughtException`이라는 특수 이벤트를 내보냅니다.
+- 다음 코드는 이러한 경우에 사용하는 코드의 예시입니다.
+
+```js
+process.on('uncaughtException', (err) => {
+  console.error(`This will catch at last the JSON parsing exception: ${err.message}`)
+  // 종료 코드 1(에러)과 함께 애플리케이션 종료
+  // 아래의 코드가 없으면 애플리케이션은 계속됨
+  process.exit(1)
+})
+```
+
+- 캐치되지 않는 예외가 애플리케이션의 일관성을 보장할 수 없는 상태로 만듭니다.
+  - 이로 인해 예기치 않는 문제가 발생할 수 있음을 이해하는 것이 중요합니다.
+- 예를 들어, 여전히 불완전한 I/O 요청이 실행 중이거나 클로저가 일치하지 않을 수 있습니다.
+- 캐치되지 않은 예외가 발생한 경우, 특히 OS에서는 애플리케이션을 실행상태에 두지 않는 것이 권장됩니다.
+- 선택적으로 필요한 작업의 정리 후에 프로세스는 즉시 종료되어야 하며, 프로세스 관리자가 애플리케이션을 재시작해야 합니다.
+- 이것은 **fail-fast** 접근법으로 알려져 있고 Node.js에서 권장되는 사항입니다.
+
+
+
+- 이것으로 콜백 패턴의 소개를 마무리 짓겠습니다.
+- 이제 Node.js와 같은 이벤트 기반 플랫폼에서의 또 다른 주요 구성요소인 관찰자 패턴을 살펴보도록 하겠습니다.
+
+
+
+## 3-2 관찰자 패턴 (The observer pattern)
+
+- Node.js에서 기본적으로 사용되고 중요한 또 다른 패턴은 **관찰자 패턴**입니다.
+  - 리액터(Reactor) 그리고 콜백(Callback)과 함께 **관찰자 패턴**은 비동기적인 Node.js 세계를 숙달하는 데 필수적인 조건입니다.
+- 관찰자 패턴은 Node.js의 반응적(reactive) 특성을 모델링하고 콜백을 완벽하게 보완하는 이상적인 해결책입니다.
+- 다음과 같이 공식적인 정의를 내릴 수 있습니다.
+  - **관찰자 패턴**은 상태 변화가 일어날 때 관찰자(또는 listener)에게 통지할 수 있는 객체를 정의하는 것입니다.
+- 콜백 패턴과 가장 큰 차이점은 전통적인 CPS 콜백이 일반적으로 오직 <u>하나</u>의 리스너에게 결과를 전달하는 반면, 관찰자 패턴은 주체가 실질적으로 <u>여러</u> 관찰자에게 통지를 할 수 있다는 점입니다.
+
+
+
+### 3-2-1 EventEmitter 클래스
+
+- 전통적인 객체지향 프로그래밍에서는 관찰자 패턴에 인터페이스, 구체적인 클래스 그리고 계층구조를 요구하지만 Node.js에서는 훨씬 더 간단합니다.
+- 관찰자 패턴은 이미 코어에 내장되어 있으며, EventEmitter 클래스를 통해 사용할 수 있습니다.
+- EventEmitter 클래스를 사용하여 특정 유형의 이벤트가 발생하면 호출되는 하나 이상의 함수를 리스너로 등록할 수 있습니다.
+
+
+
+**[그림 3.2 EventEmitter로부터 이벤트를 받는 리스너]**
+
+![image-20220102192153562](/Users/mojo/Library/Application Support/typora-user-images/image-20220102192153562.png)
+
+
+
+- EventEmitter는 `events` 코어 모듈로부터 export됩니다. 다음 코드는 EventEmitter에 대한 참조를 얻을 수 있는 방법을 보여줍니다.
+
+```js
+import { EventEmitter } from 'events'
+const emitter = new EventEmitter()
+```
+
+
+
+- EventEmitter의 필수 메서드는 다음과 같습니다.
+  - `on(event, listener)`: 이 메서드를 사용하면 주어진 이벤트 유형(문자열)에 대해 새로운 리스너(함수)를 등록할 수 있습니다.
+  - `once(event, listener)`: 이 메서드는 첫 이벤트가 전달된 후 제거되는 새로운 리스너를 등록합니다.
+  - `emit(event, [arg1], [...])`: 이 메서드는 새 이벤트를 생성하고 리스너에게 전달할 추가적인 인자들을 제공합니다.
+  - `removeListener(event, listener)`: 이 메서드는 지정된 이벤트 유형에 대한 리스너를 제거합니다.
+
+- 앞의 모든 메서드들은 연결(chaining)이 가능하게 하기 위해 EventEmitter 인스턴스를 반환합니다.
+- `listener` 함수는 시그니처 함수([arg1], [...])를 가지고 있기 때문에 이벤트가 발생된 순간에 전달되는 인수들을 쉽게 받아들일 수 있습니다.
+
+
+
+- 여러분은 이미 리스너와 전통적인 Node.js 콜백 간의 큰 차이점이 있다는 것을 보았습니다.
+- 첫 번째 인자가 꼭 에러일 필요는 없으며, `emit()`이 호출될 때 어떤 값이든 전달 가능합니다.
+
+
+
+### 3-2-2 EventEmitter 생성 및 사용
+
+- 실제로 EventEmitter를 어떻게 사용할 수 있는지 살펴보도록 하겠습니다.
+  - 가장 간단한 방법은 새로운 인스턴스를 만들어 바로 사용하는 것입니다.
+- 다음 코드는 EventEmitter를 사용하여 파일 목록에서 특정 패턴이 발견되면 실시간으로 구독자들에게 통지를 하는 함수를 보여줍니다.
+
+```js
+import { EventEmitter } from 'events'
+import { readFile } from 'fs'
+
+function findRegex(files, regex) {
+  const emitter = new EventEmitter()
+  for (const file of files) {
+    readFile(file, 'utf8', (err, content) => {
+      if (err) {
+        return emitter.emit('error', err)
+      }
+      
+      emitter.emit('fileread', file)
+      const match = content.match(regex)
+      if (match) {
+        match.forEach(elem => emitter.emit('found', file, elem))
+      }
+    })
+  }
+  
+  return emitter
+}
+```
+
+- 우리가 방금 정의한 함수는 3가지의 이벤트를 발생시키는 EventEmitter 인스턴스를 반환합니다.
+  - 'fileread', 파일을 읽을 때
+  - 'found', 일치하는 항목이 발견되었을 때
+  - 'error', 파일을 읽는 동안 에러가 발생하였을 때
+
+
+
+- `findRegex()` 함수가 어떻게 사용되는지 보겠습니다.
+
+```js
+findRegex(
+	['fileA.txt', 'fileB.json'],
+  /hello \w+\g
+)
+	.on('fileread', file => console.log(`${file} was read`))
+	.on('found', (file, match) => console.log(`Matched "${match}" in ${file}`))
+	.on('error', err => console.error(`Error emitted ${err.message}`))
+```
+
+- `findRegex()` 함수에서 생성한 EventEmitter에 의해 발생되는 3가지 이벤트 타입에 각각 리스너를 등록하였습니다.
+
+
+
+### 3-2-3 오류 전파
+
+- EventEmitter는 콜백에서처럼 에러가 발생하였을 때 예외를 단지 `throw`할 수 없습니다.
+- 대신 `error`라는 특수한 이벤트를 발생시키고, `Error` 객체를 인자로 전달하는 규약을 따릅니다.
+- 이것이 정확히 우리가 앞에서 정의한 `findRegex()` 함수가 하고 있는 것입니다.
+
+
+
+> EventEmitter는 error 이벤트를 특별한 방법으로 다룹니다. 
+>
+> 만약 해당 이벤트가 발생하고 관련된 리스너가 없을 경우에 자동으로 예외를 throw하고 애플리케이션을 빠져 나옵니다.
+>
+>  이러한 이유로 error 이벤트에 대한 리스너를 항상 등록해주는 것이 권장됩니다.
+
+
+
+### 3-2-4 관찰 가능한 객체 만들기
+
+- 앞선 예제에서 보았듯이 Node.js 세계에서는 EventEmitter 자체로 사용되는 경우는 매우 드뭅니다.
+  - 대신, 다른 클래스의 확장이 일반적입니다.
+- 실제로 어떤 클래스라도 EventEmitter의 기능을 상속받아 관찰 가능한 객체가 되는 것이 가능합니다.
+- 이 패턴을 설명하기 위해서 다음과 같이 `findRegex()` 함수의 기능을 구현해 보겠습니다.
+
+```js
+import { EventEmitter } from 'events'
+import { readFile } from 'fs'
+
+class FindRegex extends EventEmitter {
+  constructor(regex) {
+    super()
+    this.regex = regex
+    this.files = []
+  }
+  
+  addFile(file) {
+    this.files.push(file)
+    return this
+  }
+  
+  find() {
+    for (const file of this.files) {
+      readFile(file, 'utf8', (err, content) => {
+        if (err) {
+          return this.emit('error', err)
+        }
+        
+        this.emit('fileread', file)
+        
+        const match = content.match(this.regex)
+        if (match) {
+          match.forEach(elem => this.emit('found', file, elem))
+        }
+      })
+    }
+  }
+}
+```
+
+- 우리가 정의한 findRegex 클래스는 EventEmitter를 extends 하여 완전한 관찰가능 객체가 되었습니다.
+- EventEmitter 내부 구성을 초기화하기 위해서 constructor 내부에서 항상 super()를 사용하는 것을 기억하세요.
+
+
+
+- 다음은 우리가 방금 정의한 `FindRegex()` 클래스를 어떻게 사용하는지에 대한 예제입니다.
+
+```js
+const findRegexInstance = new FindRegex(/hello \w+/)
+findRegexInstance
+	.addFile('fileA.txt')
+	.addFile('fileB.json')
+	.find()
+	.on('found', (file, match) => console.log(`Matched "${match}" in file ${file}`))
+	.on('error', err => console.error(`Error emitted ${err.message}`))
+```
+
+- FindRegex 객체가 EventEmitter로부터 상속받은 `on()` 메서드를 어떻게 제공하는지 확인할 수 있습니다.
+  - 이것은 Node.js 생태계에서 꽤나 일반적인 패턴입니다.
+- 예를 들어, 핵심 HTTP 모듈의 Server 객체의 EventEmitter 함수 상속은 request(새로운 요청을 받았을 때), connection(새로운 연결이 성립되었을 때), closed(서버 소켓이 닫혔을 때)와 같은 이벤트를 생성하게끔 합니다.
+- EventEmitter를 확장하는 주목할 만한 또 다른 객체의 예는 Node.js 스트림입니다. 6장에서 상세하게 다룹니다.
+
+
+
+### 3-2-5 EventEmitter와 메모리 누수
+
+- 관찰 가능 주체들에 대해서 오랜 시간동안 구독을 하고 있을 때 더 이상 그것들이 필요하지 않게 되면 **구독 해지**하는 것이 매우 중요합니다.
+- 구독 해지는 **메모리 누수**를 예방하고 리스너의 스코프에 있는 객체에 의해 더 이상 사용되지 않는 메모리 점유를 풀게 해줍니다.
+- Node.js에서는 EventEmitter 리스너의 등록을 해지하지 않는 것이 메모리 누수의 주요 원인이 됩니다.
+
+
+
+- 메모리 누수는 메모리가 더 이상 필요하지 않지만 해제되지 않아 애플리케이션의 메모리 사용을 무기한으로 증가시키는 원인을 제공하는 소프트웨어 결함입니다.
+- 예를 들어 다음과 같은 코드를 생각해 볼 수 있습니다.
+
+```js
+const thisTakesMemory = 'A big string....'
+const listener = () => {
+  console.log(thisTakesMemory)
+}
+emitter.on('an_event', listener)
+```
+
+- 변수 `thisTakesMemory`는 리스너에서 참조되며 리스너가 해제되기 전까지 또는 emitter 자체에 대한 참조가 더 이상 활성화되어 있지 않아 도달할 수 없게 되어 가비지 컬렉션에 잡히기 전까지는 메모리에서 유지됩니다.
+
+
+
+- 즉, 애플리케이션의 전체 주기 동안 EventEmitter는 그것의 모든 리스너들이 참조하는 메모리와 함께 도달 가능한 상태를 유지한다는 것을 의미합니다.
+  - 예를 들어, 우리가 HTTP의 요청이 올 때마다 해제되지 않는 "영구적인" EventEmitter를 등록한다면 이것은 메모리 누수를 일으키게 됩니다.
+  - 애플리케이션에 의해 사용되는 메모리는 무한정 증가할 것이며, 때로는 천천히 때로는 일찍이 그러나 결국에는 애플리케이션을 망가뜨리게 됩니다.
+- 이러한 상황을 예방하기 위해서 EventEmitter의 `removeListener()` 메서드로 리스너를 해제할 수 있습니다.
+
+```js
+emitter.removeListener('an_event', listener)
+```
+
+
+
+- EventEmitter는 개발자에게 메모리 누수에 대한 가능성을 경고하기 위해서 매우 간단한 내장 메커니즘을 가지고 있습니다.
+- 리스너의 수가 특정 개수 (default 10개)를 초과할 때 EventEmitter는 경고를 발생시킵니다.
+- 가끔은 10개 이상의 등록이 전혀 무리 없을 때도 있기에 우리가 EventEmitter의 `setMaxListeners()` 메서드를 사용하여 이것에 대한 제한을 조정할 수 있습니다.
+
+> 첫 번째 이벤트를 받고 나서 자동으로 리스너를 해지하는 편리한 메서드인 `once(event, listener)`를 `on(event, listener)`를 대신해서 사용할 수 있습니다.
+>
+> 그러나 <u>**발생되지 않는 이벤트를 명시하였을 경우 리스너는 절대 해지되지 않으며**</u> 메모리 누수의 원인이 된다는 점을 상기해야 합니다.
+
+
+
+### 3-2-6 동기 및 비동기 이벤트
+
+- 이벤트 또한 콜백과 마찬가지로 이벤트를 생성하는 작업이 호출되는 순간에 따라 동기적 또는 비동기적으로 발생될 수 있습니다.
+  - 동일한 EventEmitter에서 두 가지 접근 방식을 섞어서는 안됩니다.
+  - 더 중요한 것은 동기와 비동기를 혼합하여 동일한 유형의 이벤트를 발생시키면 안됩니다.
+  - 앞서 'Zalgo를 풀어놓다'라는 섹션에서 설명한 것과 같은 문제가 발생하지 않도록 하는 것이 중요합니다.
+- 동기와 비동기 이벤트를 발생시키는 주된 차이점은 리스너를 등록할 수 있는 방법에 있습니다.
+
+
+
+- 이벤트가 비동기적으로 발생할 때 현재의 스택이 이벤트 루프에 넘어갈 때까지는 이벤트 발생을 만들어내는 작업 이후에도 새로운 리스너를 등록할 수 있습니다.
+  - 그 이유는 이벤트가 이벤트 루프의 다음 사이클이 될 때까지 실행되지 않는 것이 보장되기 때문입니다.
+  - 따라서 어떠한 이벤트도 놓치지 않게 됩니다.
+
+
+
+- 우리가 정의한 `FindRegex` 클래스는 `find()` 메서드가 호출된 이후에 비동기적으로 이벤트를 발생시킵니다.
+  - 이것이 이벤트의 손실없이 우리가 `find()` 메서드 호출 이후에도 리스너를 등록할 수 있는 이유입니다.
+- 다음의 코드와 같습니다.
+
+```js
+findRegexInstance
+	.addFile(...)
+  .find()
+	.on('found', ...)
+```
+
+
+
+- 반면에 작업이 실행된 이후에 이벤트를 동기적으로 발생시킨다면 모든 리스너를 작업 실행 전에 등록해야 합니다.
+  - 그렇지 않으면 모든 이벤트를 잃게 됩니다.
+  - 어떻게 작동하는지 살펴보기 위해 우리가 앞서 정의한 `FindRegex` 클래스를 수정하고 `find()` 메서드를 동기적으로 만들어 보겠습니다.
+
+```js
+find() {
+  for (const file of this.files) {
+    let content
+    try {
+      content = readFileSync(file, 'utf8')
+    } catch (err) {
+      this.emit('error', err)
+    }
+    this.emit('fileread', file)
+    const match = content.match(this.regex)
+    if (match) {
+      match.forEach(elem => this.emit('found', file, elem))
+    }
+  }
+  
+  return this
+}
+```
+
+- `find()` 작업을 실행하기 전에 리스너를 등록하겠습니다. 그리고 두 번째 리스너를 작업 이후에 등록해보고 무슨 일이 발생하는지 보도록 하겠습니다.
+
+```js
+const findRegexSyncInstance = new FindRegexSync(/hello \w+/)
+findRegexSyncInstance
+	.addFile('fileA.txt')
+	.addFile('fileB.json')
+  // 리스너가 호출됨
+	.on('found', (file, match) => console.log(`[Before] Matched "${match}"`))
+	.find()
+	// 이 리스너는 절대 호출안됨
+	.on('found', (file, match) => console.log(`[After] Matched "${match}"`))
+```
+
+- 예상했던 것처럼 `find()` 작업 이후에 등록한 리스너는 절대 호출되지 않습니다. 앞선 코드의 출력입니다.
+
+```js
+[Before] Matched "hello world"
+[Before] Matched "hello NodeJS"
+```
+
+
+
+- 드물게는 동기적 방법에서의 이벤트 발생이 적합할 때가 있습니다.
+- 하지만 <u>EventEmitter의 본성은 비동기적 이벤트를 다루는 데에 근거</u>합니다.
+  - 이벤트를 동기적으로 발생시키는 것은 우리가 EventEmitter가 필요하지 않거나 어딘가에서 똑같은 관찰 가능한 것이 또 다른 이벤트를 비동기적으로 발생시키고 있다는 신호입니다.
+  - 이것은 잠재적으로 Zalgo의 상황입니다.
+
+> 동기적 이벤트 발생은 `process.nextTick()`과 함께 그들이 비동기적으로 발생되는 것을 보장하도록 연기될 수 있습니다.
+
+
+
+### 3-2-7 EventEmitter vs 콜백
+
+- 비동기식 API를 정의할 때 공통적인 딜레마는 EventEmitter를 사용할지 아니면 단순하게 콜백을 사용할지를 결정하는 것입니다.
+- 일반적인 판단 규칙은 그 의미에 있습니다.
+  - 결과가 비동기적으로 반환되어야 하는 경우에는 콜백을 사용하며, 이벤트는 발생한 사건과 연결될 때 사용되어야 합니다.
+- 이처럼 간단한 원리에도 두 패러다임 사이에서 많은 혼동이 생겨나는 게 사실입니다. 대부분의 경우 동일하며 같은 결과를 얻게 해줍니다.
+- 다음의 예제를 살펴보겠습니다.
+
+```js
+import { EventEmitter } from 'events'
+
+function helloEvents() {
+  const eventEmitter = new EventEmitter()
+  setTimeout(() => eventEmitter.emit('complete', 'hello world'), 100)
+  return eventEmitter
+}
+
+functino helloCallback(cb) {
+  setTimeout(() => cb(null, 'hello world'), 100)
+}
+
+helloEvents().on('complete', message => console.log(message))
+helloCallback((err, message) => console.log(message))
+```
+
+- 두 함수 `helloEvents()`와 `helloCallback()`은 기능적인 면에서 동일하게 생각할 수 있습니다.
+- 첫 번째는 이벤트를 사용하여 타임아웃의 완료를 전달하며, 두 번째는 콜백을 사용합니다.
+- 그러나 실제로 이들을 구별하는 것은 가독성, 의미, 구현 또는 사용되는데 필요한 코드의 양입니다.
+
+
+
+- 어떤 스타일을 선택할지에 대한 규칙을 제공할 수는 없지만 결정을 내리는데 도움이 될 수 있는 몇 가지 힌트는 제공할 수 있습니다.
+- **콜백**은 <u>여러 유형의 결과를 전달</u>하는데 있어서 약간의 제한이 있습니다. 
+  - 실제로 콜백의 인자로 타입을 전달하거나 각 이벤트에 적합한 여러 개의 콜백을 취하여 차이를 둘 수 있습니다.
+  - 하지만 이것은 깔끔한 API라고 할 수 없습니다. 이 상황에서는 EventEmitter가 더 나은 인터페이스와 군더더기 없는 코드를 만들게 해줍니다.
+- **EventEmitter**는 <u>같은 이벤트가 여러 번 발생</u>하거나 <u>아예 발생하지 않을 수도 있는 경우</u>에 사용되어야 합니다.
+  - 사실 콜백은 작업이 성공적이든 아니든 정확히 한번 호출됩니다.
+  - 반복가능성이 있는 상황을 갖는 것은 결과가 반환되어야 하는 것보다는 알려주는 기능인 이벤트와 더 유사합니다.
+- **콜백**을 사용하는 API는 오직 특정한 <u>콜백 하나만</u>을 호출할 수 있습니다.
+- 반면에, **EventEmitter**는 같은 이벤트에 대해 다수의 리스너를 등록할 수 있게 해줍니다.
 
 
 
 
 
+### 3-2-8 콜백과 EventEmitter의 결합
+
+- EventEmitter를 콜백과 함께 사용할 수 있는 특정한 상황도 존재합니다.
+  - 이 패턴은 매우 강력합니다.
+- 전통적인 콜백을 사용하여 결과를 비동기적으로 전달할 수 있게끔 해주고 동시에 EventEmitter를 반환하여 비동기 처리 상태에 대해 보다 상세한 판단을 제공하는데 사용될 수 있습니다.
 
 
 
+- 이 패턴의 예시는 glob 스타일로 파일 검색을 수행하는 라이브러리인 `glob` 패키지(https://www.npmjs.com/package/glob)에 의해 제공됩니다.
+- 이 모듈의 주요 진입점은 아래와 같은 특징을 가지는 함수입니다.
+
+```js
+const eventEmitter = glob(pattern, [options], callback)
+```
+
+- 이 함수는 패턴을 첫 번째 인자로 취하고, 다음에는 일련의 옵션을 그리고 주어진 패턴과 일치하는 모든 파일 리스트를 가지고 호출될 콜백 함수를 취합니다.
+- 동시에 이 함수는 프로세스 상태에 대해서 보다 세분화된 알림을 제공하는 EventEmitter를 반환합니다.
+  - 예를 들어, `match` 이벤트가 일어날 때 실시간으로 알림을 받거나 `end` 이벤트와 함께 매칭되는 모든 파일 리스트를 얻거나 `abort` 이벤트를 받아 프로세스가 수동으로 중단되었는지 아닌지 아는 것이 가능합니다.
+- 다음의 코드는 어떻게 사용되는지 보여줍니다.
+
+```js
+import glob from 'glob'
+
+glob('data/*.txt', 
+  (err, files) => {
+  	if (err) {
+      return console.error(err)
+    }
+  	console.log(`All files found: ${JSON.stringify(files)}`)
+	})
+	.on('match', match => console.log(`Match found: ${match}`))
+```
+
+- 전통적인 콜백과 EventEmitter를 결합하는 것은 같은 API에 두 가지 다른 접근을 제공하는 우아한 방법입니다.
+- 하나의 접근이 일반적으로 더 간단하고 더욱 즉각적으로 사용되는 것으로 여겨지는 반면, 다른 접근은 심화된 시나리오에서 선택됩니다.
+
+
+
+> 또한 EventEmitter는 프라미스("5장. Promises 그리고 Async/Await와 함께 하는 비동기 제어 흐름 패턴"에서 살펴볼 것입니다)와 같이 다른 비동기 메커니즘과 결합될 수도 있습니다.
+>
+> 이 경우에는 단지 프라미스와 EventEmitter를 모두 포함하는 객체(또는 배열)를 반환합니다.
+>
+> 이 객체는 호출자에 의해 { promise.events } = foo()와 같이 해체될 수 있습니다.
+
+
+
+
+
+### 요약
+
+- 이 장에서는 처음으로 실용적 측면의 비동기적 코드 작성을 접해보았습니다.
+- 전체 Node.js에서 비동기적 기반의 큰 두 갈래(EventEmitter와 콜백)를 알아보았습니다.
+  - 그리고 그것의 사용에 관한 세부사항과 규약 그리고 패턴을 탐구해보았습니다.
+- 또한 비동기적 코드를 다룰 때 몇 가지 위험한 것들을 살펴보고 그것을 피하는 방법에 대해서 배웠씁니다.
