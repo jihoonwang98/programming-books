@@ -164,7 +164,7 @@ Result: 3
 
 **[그림 3.1 비동기 함수 호출의 제어 흐름]**
 
-![image-20220102133213090](/Users/mojo/Library/Application Support/typora-user-images/image-20220102133213090.png)
+![image-20220102133213090](./img/image-20220102133213090.png)
 
 
 
@@ -629,7 +629,7 @@ process.on('uncaughtException', (err) => {
 
 **[그림 3.2 EventEmitter로부터 이벤트를 받는 리스너]**
 
-![image-20220102192153562](/Users/mojo/Library/Application Support/typora-user-images/image-20220102192153562.png)
+![image-20220102192153562](./img/image-20220102192153562.png)
 
 
 
